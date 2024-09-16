@@ -4,3 +4,4 @@ urllib3==1.26.15
 environs==9.5.0
 django-phonenumber-field==8.0.0
 phonenumbers==8.13.42
+pillow==10.4.0
