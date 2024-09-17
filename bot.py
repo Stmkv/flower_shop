@@ -3,7 +3,6 @@ import os
 from datetime import datetime
 
 import django
-import telegram
 from django.conf import settings
 from environs import Env
 from telegram import (
@@ -23,17 +22,21 @@ from telegram.ext import (
     Updater,
 )
 
+# Настройка Django
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "flower_shop.settings")
 django.setup()
 
 from tg_bot.models import Bouquet, Order
 
+# Настройка логирования
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
+logger = logging.getLogger(__name__)
 
 
-def start(update: telegram.Update, context: CallbackContext) -> None:
+# Команда /start
+def start(update: Update, context: CallbackContext) -> None:
     reply_keyboard = [
         ["День рождения", "Свадьба"],
         ["В школу", "Без повода"],
@@ -48,6 +51,7 @@ def start(update: telegram.Update, context: CallbackContext) -> None:
     context.user_data["waiting_for_event"] = True
 
 
+# Выбор события
 def event_selection(update: Update, context: CallbackContext) -> None:
     if not context.user_data.get("waiting_for_event"):
         return
@@ -64,9 +68,10 @@ def event_selection(update: Update, context: CallbackContext) -> None:
         context.user_data["event"] = event_type
         context.user_data["awaiting_custom_event"] = False
         ask_for_budget(update, context)
-        context.user_data["waiting_for_event"] = False  # Сброс флага
+        context.user_data["waiting_for_event"] = False
 
 
+# Обработка пользовательского события
 def custom_event_handler(update: Update, context: CallbackContext) -> None:
     if context.user_data.get("awaiting_custom_event"):
         custom_event = update.message.text
@@ -75,12 +80,14 @@ def custom_event_handler(update: Update, context: CallbackContext) -> None:
         ask_for_budget(update, context)
 
 
+# Запрос бюджета
 def ask_for_budget(update: Update, context: CallbackContext) -> None:
     reply_keyboard = [["~500", "~1000", "~2000"], ["больше", "не важно"]]
     markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
     update.message.reply_text("На какую сумму рассчитываете?", reply_markup=markup)
 
 
+# Выбор бюджета
 def budget_selection(update: Update, context: CallbackContext) -> None:
     price = update.message.text
     event_type = context.user_data.get("event")
@@ -117,8 +124,9 @@ def budget_selection(update: Update, context: CallbackContext) -> None:
         update.message.reply_text("Извините, подходящий букет не найден.")
 
 
+# Обработка нажатий на кнопки
 def button_handler(update: Update, context: CallbackContext) -> None:
-    print("Я в button_handler")
+    logger.info("Я в button_handler")  # Лог для отладки
     query = update.callback_query
     query.answer()
     data = query.data
@@ -128,6 +136,7 @@ def button_handler(update: Update, context: CallbackContext) -> None:
         context.user_data["bouquet_id"] = bouquet_id
         context.user_data["order_step"] = "name"
 
+        logger.info(f"Букет ID: {bouquet_id}, Ожидается ввод имени")
         query.edit_message_text("Пожалуйста, введите ваше имя:")
 
     elif data == "order_consultation":
@@ -139,83 +148,27 @@ def button_handler(update: Update, context: CallbackContext) -> None:
         query.edit_message_text("Вот вся наша коллекция. Выберите понравившийся букет.")
 
 
-def order_handler(update: Update, context: CallbackContext) -> None:
-    print("Я в order_handler")
-    user_id = update.message.from_user.id
-    text = update.message.text
-
-    if "order_step" not in context.user_data:
-        return
-
-    order_step = context.user_data["order_step"]
-    bouquet_id = context.user_data.get("bouquet_id")
-
-    if order_step == "name":
-        context.user_data["name"] = text
-        update.message.reply_text("Пожалуйста, введите ваш адрес:")
-        context.user_data["order_step"] = "address"
-    elif order_step == "address":
-        context.user_data["address"] = text
-        update.message.reply_text(
-            "Пожалуйста, введите дату доставки (в формате YYYY-MM-DD):"
-        )
-        context.user_data["order_step"] = "delivery_date"
-    elif order_step == "delivery_date":
-        try:
-            delivery_date = datetime.strptime(text, "%Y-%m-%d").date()
-            context.user_data["delivery_date"] = delivery_date
-            update.message.reply_text(
-                "Пожалуйста, введите время доставки (в формате HH:MM):"
-            )
-            context.user_data["order_step"] = "delivery_time"
-        except ValueError:
-            update.message.reply_text("Неверный формат даты. Попробуйте снова.")
-    elif order_step == "delivery_time":
-        try:
-            delivery_time = datetime.strptime(text, "%H:%M").time()
-            context.user_data["delivery_time"] = delivery_time
-            bouquet = Bouquet.objects.get(id=context.user_data["bouquet_id"])
-            Order.objects.create(
-                user_id=user_id,
-                bouquet=bouquet,
-                name=context.user_data["name"],
-                address=context.user_data["address"],
-                delivery_date=context.user_data["delivery_date"],
-                delivery_time=context.user_data["delivery_time"],
-            )
-            update.message.reply_text("Ваш заказ был успешно оформлен! Спасибо!")
-            context.user_data.clear()  # Сброс всех данных пользователя
-        except ValueError:
-            update.message.reply_text("Неверный формат времени. Попробуйте снова.")
-
-
 if __name__ == "__main__":
     env = Env()
     env.read_env()
 
-    tg_chat_id = os.environ["TG_CHAT_ID"]
     tg_bot_token = os.environ["TG_BOT_TOKEN"]
-    bot = telegram.Bot(token=tg_bot_token)
-
     updater = Updater(token=tg_bot_token)
     dp = updater.dispatcher
 
+    # Регистрируем хэндлеры
     dp.add_handler(CommandHandler("start", start))
+    dp.add_handler(CallbackQueryHandler(button_handler))
     dp.add_handler(
         MessageHandler(
             Filters.regex(r"(~500|~1000|~2000|больше|не важно)"), budget_selection
         )
     )
     dp.add_handler(MessageHandler(Filters.text & ~Filters.command, event_selection))
-
     dp.add_handler(
         MessageHandler(Filters.text & ~Filters.command, custom_event_handler)
     )
 
-    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, order_handler))
-
-    dp.add_handler(CallbackQueryHandler(button_handler))
-
     updater.start_polling()
-    print("Бот в сети")
+    logger.info("Бот запущен и работает.")
     updater.idle()
