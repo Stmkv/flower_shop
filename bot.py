@@ -3,6 +3,7 @@ import os
 from datetime import datetime
 
 import django
+import requests
 from django.conf import settings
 from environs import Env
 from telegram import (
@@ -197,20 +198,61 @@ def handle_message(update: Update, context: CallbackContext) -> None:
 
     if context.user_data.get("awaiting_time"):
         context.user_data["time"] = message_text
+
+        telegram_id = update.message.from_user.id
+        name = context.user_data["full_name"]
+        phone = context.user_data["phone"]
+        address = context.user_data["address"]
+        time = context.user_data["time"]
+        bouquet = Bouquet.objects.get(id=1)
+
+        process_flower(
+            update, context, telegram_id, name, phone, address, time, bouquet
+        )
         update.message.reply_text("Заказ принят! Спасибо за ваш выбор.")
         context.user_data.clear()  # Очищаем данные после завершения заказа
 
-        process_flower(update, context)
+
+def process_flower(update, context, telegram_id, name, phone, address, time, bouquet):
+    order = Order(
+        user_id=telegram_id,
+        bouquet=bouquet,
+        name=name,
+        address=address,
+        delivery_time=time,
+    )
+    order.save()
+
+    order_details = f"""Получен новый заказ
+    № - {order.id}
+    Клиент: {name}
+    Номер телефона: {phone}
+    Букет: {bouquet}
+    Цена: {bouquet.price}
+    Адрес доставки: {address}
+    Дата создания заказа: {order.date_ordered}
+    Время доставки: {order.delivery_time}
+    """
+    send_order_confirmation(tg_chat_id, order_details, tg_bot_token)
+    context.user_data.clear()
 
 
-def process_flower(update: Update, context: CallbackContext) -> None:
-
+def send_order_confirmation(
+    tg_chat_id: int, order_details: str, tg_bot_token: str
+) -> None:
+    url = f"https://api.telegram.org/bot{tg_bot_token}/sendMessage"
+    payload = {"chat_id": tg_chat_id, "text": order_details, "parse_mode": "HTML"}
+    response = requests.post(url, data=payload)
+    if response.status_code == 200:
+        print("Сообщение успешно отправлено.")
+    else:
+        print(f"Ошибка отправки сообщения: {response.text}")
 
 
 if __name__ == "__main__":
     env = Env()
     env.read_env()
-
+    tg_chat_id = os.environ["TG_CHAT_ID"]
     tg_bot_token = os.environ["TG_BOT_TOKEN"]
     updater = Updater(token=tg_bot_token)
     dp = updater.dispatcher
